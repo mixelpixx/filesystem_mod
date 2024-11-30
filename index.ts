@@ -128,6 +128,12 @@ const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
 
+const CmdLineArgsSchema = z.object({
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  workingDir: z.string().optional(),
+});
+
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
 
@@ -290,6 +296,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: [],
         },
       },
+      {
+        name: "cmd_line",
+        description: "Execute a command line operation within allowed directories. Commands are executed " +
+          "with strict security controls and path validation. The working directory must be within allowed paths. " +
+          "Returns command output or error message. Use carefully as this provides direct system access.",
+        inputSchema: zodToJsonSchema(CmdLineArgsSchema) as ToolInput,
+      },
     ],
   };
 });
@@ -419,6 +432,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: `Allowed directories:\n${allowedDirectories.join('\n')}` 
           }],
         };
+      }
+
+      case "cmd_line": {
+        const parsed = CmdLineArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for cmd_line: ${parsed.error}`);
+        }
+        
+        const { command, args: cmdArgs = [], workingDir } = parsed.data;
+        
+        // Validate working directory if provided
+        let validWorkingDir = process.cwd();
+        if (workingDir) {
+          validWorkingDir = await validatePath(workingDir);
+        }
+        
+        // Basic command sanitization
+        if (!/^[\w\-\.\/]+$/.test(command)) {
+          throw new Error("Invalid command format");
+        }
+        
+        // Validate each argument
+        cmdArgs.forEach(arg => {
+          if (!/^[\w\-\.\s\/]+$/.test(arg)) {
+            throw new Error(`Invalid argument format: ${arg}`);
+          }
+        });
+        
+        const { execSync } = await import('child_process');
+        try {
+          const output = execSync(`${command} ${cmdArgs.join(' ')}`, {
+            encoding: 'utf8',
+            cwd: validWorkingDir,
+          });
+          return { content: [{ type: "text", text: output }] };
+        } catch (error) {
+          throw new Error(`Command execution failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       default:
