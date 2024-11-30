@@ -11,7 +11,6 @@ Node.js server implementing Model Context Protocol (MCP) for filesystem operatio
 
 ### Resources
 
-
 ### Tools
 
   - Read complete contents of a file

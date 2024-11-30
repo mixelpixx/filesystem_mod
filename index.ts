@@ -55,7 +55,7 @@ async function validatePath(requestedPath: string): Promise<string> {
     ? path.resolve(expandedPath)
     : path.resolve(process.cwd(), expandedPath);
     
-  const normalizedRequested = normalizePath(absolute); // Normalize the requested path
+  const normalizedRequested = normalizePath(absolute); // Normalize requested path
 
   // Check if path is within allowed directories
   const isAllowed = allowedDirectories.some(dir => normalizedRequested.startsWith(dir));
@@ -68,7 +68,7 @@ async function validatePath(requestedPath: string): Promise<string> {
     const realPath = await fs.realpath(absolute);
     const normalizedReal = normalizePath(realPath);
     const isRealPathAllowed = allowedDirectories.some(dir => normalizedReal.startsWith(dir));
-    if (!isRealPathAllowed) { // Check if symlink target is allowed
+    if (!isRealPathAllowed) { // Ensure symlink target is within allowed directories
       throw new Error("Access denied - symlink target outside allowed directories");
     }
     return realPath;
