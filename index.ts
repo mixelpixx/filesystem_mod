@@ -340,4 +340,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "write_file": {
+        const parsed = WriteFileArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        await fs.writeFile(validPath, parsed.data.content);
+        return {
+          content: [{ type: "text", text: `File written successfully to ${validPath}` }],
+        };
+      }
+
       // Rest of the code...
+
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  } catch (error) {
+    throw error;
+  }
+}); // Properly close the server.setRequestHandler
