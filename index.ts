@@ -299,7 +299,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "cmd_line",
         description: "Execute a command line operation within allowed directories. Commands are executed " +
-          "with strict security controls and path validation. The working directory must be within allowed paths. " +
+          "to support development tools like Python, Node, NPM, UV, UVX, PIP, and other common development commands. " +
+          "Working directory defaults to current directory if not specified. " +
           "Returns command output or error message. Use carefully as this provides direct system access.",
         inputSchema: zodToJsonSchema(CmdLineArgsSchema) as ToolInput,
       },
@@ -450,18 +451,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         
         // Import exec synchronously to ensure it's available
         const { execSync } = await import('child_process');
+        
         try {
           const output = execSync(`${command} ${cmdArgs.join(' ')}`, {
             encoding: 'utf8',
             cwd: validWorkingDir,
-            stdio: ['inherit', 'pipe', 'pipe'],
-            shell: true
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: true,
+            env: process.env // Pass through environment variables
           });
-          return { content: [{ type: "text", text: output }] };
+          
+          return { 
+            content: [{ 
+              type: "text", 
+              text: `Command executed successfully:\n${output}` 
+            }] 
+          };
         } catch (error) {
           const errorOutput = error instanceof Error ? error.message : String(error);
           return { 
-            content: [{ type: "text", text: `Command execution failed: ${errorOutput}` }],
+            content: [{ 
+              type: "text", 
+              text: `Command execution failed:\nCommand: ${command} ${cmdArgs.join(' ')}\nError: ${errorOutput}` 
+            }],
             isError: true 
           };
         }
