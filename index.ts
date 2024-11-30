@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Server, ServerResponse } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ToolSchema,
+  Response,
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs/promises";
 import path from "path";
@@ -304,24 +305,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
+    let response: Response;
 
     switch (name) {
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
-          throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
+          return {
+            error: {
+              code: "INVALID_ARGUMENTS",
+              message: `Invalid arguments for read_file: ${parsed.error}`,
+            },
+          };
         }
-        const validPath = await validatePath(parsed.data.path);
-        const content = await fs.readFile(validPath, "utf-8");
-        return {
-          content: [{ type: "text", text: content }], // Return file content
-        };
+        
+        try {
+          const validPath = await validatePath(parsed.data.path);
+          const content = await fs.readFile(validPath, "utf-8");
+          return {
+            content: [{ type: "text", text: content }], // Return file content
+          };
+        } catch (error) {
+          return { error: { code: "INVALID_PATH", message: String(error) } };
+        }
       }
 
       case "read_multiple_files": {
         const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
         if (!parsed.success) {
-          throw new Error(`Invalid arguments for read_multiple_files: ${parsed.error}`);
+          return {
+            error: {
+              code: "INVALID_ARGUMENTS",
+              message: `Invalid arguments for read_multiple_files: ${parsed.error}`,
+            },
+          };
         }
         const results = await Promise.all(
           parsed.data.paths.map(async (filePath: string) => {
@@ -343,7 +360,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "write_file": {
         const parsed = WriteFileArgsSchema.safeParse(args);
         if (!parsed.success) {
-          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
+          return {
+            error: {
+              code: "INVALID_ARGUMENTS",
+              message: `Invalid arguments for write_file: ${parsed.error}`,
+            },
+          };
         }
         const validPath = await validatePath(parsed.data.path);
         await fs.writeFile(validPath, parsed.data.content);
@@ -359,5 +381,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   } catch (error) {
     throw error;
+  } finally {
+    // Ensure proper cleanup
+    process.on('SIGTERM', () => {
+      const response = JSON.stringify({ type: "terminate", status: "success" });
+      process.stdout.write(response + '\n');
+      process.exit(0);
+    });
   }
 }); // Properly close the server.setRequestHandler
+
+const transport = new StdioServerTransport({
+  validateMessages: true,
+  formatResponse: true
+});
+server.listen(transport);
