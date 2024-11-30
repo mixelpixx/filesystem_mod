@@ -429,6 +429,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "list_allowed_directories": {
         return {
           content: [{ 
-            type: "textGot it, here's the continuation of the index.ts file:
+            type: "text",
+            text: `Allowed directories:\n${allowedDirectories.join('\n')}`
+          }],
+        };
+      }
 
-index.ts
+      case "cmd_line": {
+        const parsed = CmdLineArgsSchema.safeParse(args);
