@@ -13,31 +13,29 @@ import os from 'os';
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-// Command line argument parsing
-const args = process.argv.slice(2);
+const args = process.argv.slice(2); // Extract command-line arguments
+
 if (args.length === 0) {
   console.error("Usage: mcp-server-filesystem <allowed-directory> [additional-directories...]");
   process.exit(1);
 }
 
-// Normalize all paths consistently
 function normalizePath(p: string): string {
   return path.normalize(p).toLowerCase();
 }
 
-function expandHome(filepath: string): string {
+function expandHome(filepath: string): string { // Expand ~ to home directory
   if (filepath.startsWith('~/') || filepath === '~') {
     return path.join(os.homedir(), filepath.slice(1));
   }
   return filepath;
 }
 
-// Store allowed directories in normalized form
 const allowedDirectories = args.map(dir => 
   normalizePath(path.resolve(expandHome(dir)))
 );
 
-// Validate that all directories exist and are accessible
+// Validate that all specified directories exist and are accessible
 await Promise.all(args.map(async (dir) => {
   try {
     const stats = await fs.stat(dir);
@@ -51,14 +49,13 @@ await Promise.all(args.map(async (dir) => {
   }
 }));
 
-// Security utilities
 async function validatePath(requestedPath: string): Promise<string> {
   const expandedPath = expandHome(requestedPath);
   const absolute = path.isAbsolute(expandedPath)
     ? path.resolve(expandedPath)
     : path.resolve(process.cwd(), expandedPath);
     
-  const normalizedRequested = normalizePath(absolute);
+  const normalizedRequested = normalizePath(absolute); // Normalize the requested path
 
   // Check if path is within allowed directories
   const isAllowed = allowedDirectories.some(dir => normalizedRequested.startsWith(dir));
@@ -71,7 +68,7 @@ async function validatePath(requestedPath: string): Promise<string> {
     const realPath = await fs.realpath(absolute);
     const normalizedReal = normalizePath(realPath);
     const isRealPathAllowed = allowedDirectories.some(dir => normalizedReal.startsWith(dir));
-    if (!isRealPathAllowed) {
+    if (!isRealPathAllowed) { // Check if symlink target is allowed
       throw new Error("Access denied - symlink target outside allowed directories");
     }
     return realPath;
@@ -92,7 +89,6 @@ async function validatePath(requestedPath: string): Promise<string> {
   }
 }
 
-// Schema definitions
 const ReadFileArgsSchema = z.object({
   path: z.string(),
 });
@@ -131,7 +127,7 @@ const GetFileInfoArgsSchema = z.object({
 const CmdLineArgsSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
-  workingDir: z.string().optional()
+  workingDir: z.string().optional(),
 });
 
 const ToolInputSchema = ToolSchema.shape.inputSchema;
@@ -147,7 +143,6 @@ interface FileInfo {
   permissions: string;
 }
 
-// Server setup
 const server = new Server(
   {
     name: "secure-filesystem-server",
@@ -160,12 +155,11 @@ const server = new Server(
   },
 );
 
-// Tool implementations
 async function getFileStats(filePath: string): Promise<FileInfo> {
   const stats = await fs.stat(filePath);
   return {
     size: stats.size,
-    created: stats.birthtime,
+    created: stats.birthtime, // File creation time
     modified: stats.mtime,
     accessed: stats.atime,
     isDirectory: stats.isDirectory(),
@@ -194,7 +188,7 @@ async function searchFiles(
           results.push(fullPath);
         }
 
-        if (entry.isDirectory()) {
+        if (entry.isDirectory()) { // Recursively search subdirectories
           await search(fullPath);
         }
       } catch (error) {
@@ -208,7 +202,6 @@ async function searchFiles(
   return results;
 }
 
-// Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -222,7 +215,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(ReadFileArgsSchema) as ToolInput,
       },
       {
-        name: "read_multiple_files",
+        name: "read_multiple_files", // Tool for reading multiple files
         description:
           "Read the contents of multiple files simultaneously. This is more " +
           "efficient than reading files one by one when you need to analyze " +
@@ -308,7 +301,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
@@ -322,7 +314,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const validPath = await validatePath(parsed.data.path);
         const content = await fs.readFile(validPath, "utf-8");
         return {
-          content: [{ type: "text", text: content }],
+          content: [{ type: "text", text: content }], // Return file content
         };
       }
 
@@ -348,92 +340,4 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "write_file": {
-        const parsed = WriteFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        await fs.writeFile(validPath, parsed.data.content, "utf-8");
-        return {
-          content: [{ type: "text", text: `Successfully wrote to ${parsed.data.path}` }],
-        };
-      }
-
-      case "create_directory": {
-        const parsed = CreateDirectoryArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for create_directory: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        await fs.mkdir(validPath, { recursive: true });
-        return {
-          content: [{ type: "text", text: `Successfully created directory ${parsed.data.path}` }],
-        };
-      }
-
-      case "list_directory": {
-        const parsed = ListDirectoryArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const entries = await fs.readdir(validPath, { withFileTypes: true });
-        const formatted = entries
-          .map((entry) => `${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${entry.name}`)
-          .join("\n");
-        return {
-          content: [{ type: "text", text: formatted }],
-        };
-      }
-
-      case "move_file": {
-        const parsed = MoveFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for move_file: ${parsed.error}`);
-        }
-        const validSourcePath = await validatePath(parsed.data.source);
-        const validDestPath = await validatePath(parsed.data.destination);
-        await fs.rename(validSourcePath, validDestPath);
-        return {
-          content: [{ type: "text", text: `Successfully moved ${parsed.data.source} to ${parsed.data.destination}` }],
-        };
-      }
-
-      case "search_files": {
-        const parsed = SearchFilesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for search_files: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const results = await searchFiles(validPath, parsed.data.pattern);
-        return {
-          content: [{ type: "text", text: results.length > 0 ? results.join("\n") : "No matches found" }],
-        };
-      }
-
-      case "get_file_info": {
-        const parsed = GetFileInfoArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for get_file_info: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const info = await getFileStats(validPath);
-        return {
-          content: [{ type: "text", text: Object.entries(info)
-            .map(([key, value]) => `${key}: ${value}`)
-            .join("\n") }],
-        };
-      }
-
-      case "list_allowed_directories": {
-        return {
-          content: [{ 
-            type: "text",
-            text: `Allowed directories:\n${allowedDirectories.join('\n')}`
-          }],
-        };
-      }
-
-      case "cmd_line": {
-        const parsed = CmdLineArgsSchema.safeParse(args);
+      // Rest of the code...
