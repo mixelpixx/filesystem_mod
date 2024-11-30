@@ -1,50 +1,40 @@
-import { z } from 'zod';
-import { allowedDirectories } from './allowed-directories';
-
-const CmdLineArgsSchema = z.object({
-  action: z.enum(['list_allowed_directories', 'cmd_line']),
-  args: z.array(z.string()).optional(),
+No content yet
+      case "cmd_line": {
+        const parsed = CmdLineArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for cmd_line: ${parsed.error}`);
+        }
+        
+        // Validate working directory if provided
+        let workDir = process.cwd();
+        if (parsed.data.workingDir) {
+          workDir = await validatePath(parsed.data.workingDir);
+        }
+        
+        const { exec } = await import('child_process');
+        const util = await import('util');
+        const execPromise = util.promisify(exec);
+        
+        try {
+          const { stdout, stderr } = await execPromise(
+            `${parsed.data.command} ${parsed.data.args?.join(' ') || ''}`,
+            { cwd: workDir }
+          );
+          return {
+            content: [{ type: "text", text: stdout + stderr }],
+          };
+        } catch (error: any) {
+          throw new Error(`Command execution failed: ${error.message}`);
+        }
+      }
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  } catch (error) {
+    throw new Error(`Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 });
 
-export async function handleFilesystemRequest(request: {
-  action: string;
-  args?: string[];
-}): Promise<{ content: any[] }> {
-  const parsed = CmdLineArgsSchema.safeParse(request);
-  if (!parsed.success) {
-    return {
-      content: [{ type: 'error', text: 'Invalid request format' }],
-    };
-  }
-
-  switch (parsed.data.action) {
-    case 'list_allowed_directories': {
-      return {
-        content: [{ 
-          type: 'text',
-          text: `Allowed directories:\n${allowedDirectories.join('\n')}`
-        }]
-      };
-    }
-
-    case 'cmd_line': {
-      const parsed = CmdLineArgsSchema.safeParse(request.args);
-      if (!parsed.success) {
-        return {
-          content: [{ type: 'error', text: 'Invalid command line arguments' }],
-        };
-      }
-
-      // Handle the command line request
-      return {
-        content: [{ type: 'text', text: 'Command line request handled' }],
-      };
-    }
-
-    default: {
-      return {
-        content: [{ type: 'error', text: 'Unknown action' }],
-      };
-    }
-  }
-}
+// Start the server with stdio transport
+const transport = new StdioServerTransport();
+await server.listen(transport);
