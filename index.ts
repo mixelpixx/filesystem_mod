@@ -429,6 +429,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "list_allowed_directories": {
         return {
           content: [{ 
-            typeGot it, here's the continuation of the index.ts file:
+            type: "textGot it, here's the continuation of the index.ts file:
 
 index.ts
