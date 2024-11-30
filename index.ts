@@ -131,7 +131,7 @@ const GetFileInfoArgsSchema = z.object({
 const CmdLineArgsSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
-  workingDir: z.string().optional(),
+  workingDir: z.string().optional()
 });
 
 const ToolInputSchema = ToolSchema.shape.inputSchema;
@@ -437,38 +437,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "cmd_line": {
         const parsed = CmdLineArgsSchema.safeParse(args);
         if (!parsed.success) {
-          throw new Error(`Invalid arguments for cmd_line: ${parsed.error}`);
+          throw new Error(`Invalid arguments for cmd_line: ${parsed.error.message}`);
         }
         
         const { command, args: cmdArgs = [], workingDir } = parsed.data;
         
-        // Validate working directory if provided
+        // Only validate working directory if provided, otherwise use current
         let validWorkingDir = process.cwd();
         if (workingDir) {
           validWorkingDir = await validatePath(workingDir);
         }
         
-        // Basic command sanitization
-        if (!/^[\w\-\.\/]+$/.test(command)) {
-          throw new Error("Invalid command format");
-        }
-        
-        // Validate each argument
-        cmdArgs.forEach(arg => {
-          if (!/^[\w\-\.\s\/]+$/.test(arg)) {
-            throw new Error(`Invalid argument format: ${arg}`);
-          }
-        });
-        
+        // Import exec synchronously to ensure it's available
         const { execSync } = await import('child_process');
         try {
           const output = execSync(`${command} ${cmdArgs.join(' ')}`, {
             encoding: 'utf8',
             cwd: validWorkingDir,
+            stdio: ['inherit', 'pipe', 'pipe'],
+            shell: true
           });
           return { content: [{ type: "text", text: output }] };
         } catch (error) {
-          throw new Error(`Command execution failed: ${error instanceof Error ? error.message : String(error)}`);
+          const errorOutput = error instanceof Error ? error.message : String(error);
+          return { 
+            content: [{ type: "text", text: `Command execution failed: ${errorOutput}` }],
+            isError: true 
+          };
         }
       }
 
