@@ -455,10 +455,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 }); // Properly close the server.setRequestHandler
 
+// Start server
 async function runServer() {
   const transport = new StdioServerTransport();
-  await server.connect();
-  console.error("Secure MCP Filesystem Server running on stdio");
+  await server.connect(transport);
+  console.error("Secure MCP Filesystem Server running on stdio transport");
   console.error("Allowed directories:", allowedDirectories);
 }
 
