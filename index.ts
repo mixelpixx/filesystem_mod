@@ -92,6 +92,7 @@ async function validatePath(requestedPath: string): Promise<string> {
 
 const ReadFileArgsSchema = z.object({
   path: z.string(),
+  encoding: z.enum(["utf-8", "ascii", "utf16le", "ucs2", "base64", "latin1", "binary", "hex"]).optional(),
 });
 
 const ReadMultipleFilesArgsSchema = z.object({
@@ -214,6 +215,44 @@ async function searchFiles(
   return results;
 }
 
+async function executeCommand(command: string, args: string[], workingDir: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, {
+      cwd: workingDir,
+      shell: true
+    });
+
+    let output = '';
+    proc.stdout.on('data', (data) => output += data);
+    proc.stderr.on('data', (data) => output += data);
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve(output);
+      } else {
+        reject(new Error(`Command failed with exit code ${code}\n${output}`));
+      }
+    });
+  });
+}
+
+function handleError(error: unknown): { error: { code: string; message: string } } {
+  if (error instanceof Error) {
+    return {
+      error: {
+        code: error.name,
+        message: error.message,
+      },
+    };
+  }
+  return {
+    error: {
+      code: "UNKNOWN_ERROR",
+      message: String(error),
+    },
+  };
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -227,7 +266,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(ReadFileArgsSchema) as ToolInput,
       },
       {
-        name: "read_multiple_files", // Tool for reading multiple files
+        name: "read_multiple_files",
         description:
           "Read the contents of multiple files simultaneously. This is more " +
           "efficient than reading files one by one when you need to analyze " +
@@ -304,7 +343,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "cmd_line",
         description: "Execute a command line operation within allowed directories. Commands are executed " +
-          "to support development tools like Python, Node, NPM, UV, UVX, PIP, and other common development commands. " +
+          "to support development tools like Python, Node, NPM, UV, UVX, PIP, Git, and other common development commands. " +
           "Working directory defaults to current directory if not specified. " +
           "Returns command output or error message. Use carefully as this provides direct system access.",
         inputSchema: zodToJsonSchema(CmdLineArgsSchema) as ToolInput,
@@ -316,40 +355,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
-    let response;
+    let result;
 
     switch (name) {
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
-          return {
-            error: {
-              code: "INVALID_ARGUMENTS",
-              message: `Invalid arguments for read_file: ${parsed.error}`,
-            },
-          };
+          throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
         }
         
-        try {
-          const validPath = await validatePath(parsed.data.path);
-          const content = await fs.readFile(validPath, "utf-8");
-          return {
-            content: [{ type: "text", text: content }], // Return file content
-          };
-        } catch (error) {
-          return { error: { code: "INVALID_PATH", message: String(error) } };
-        }
+        const validPath = await validatePath(parsed.data.path);
+        const content = await fs.readFile(validPath, parsed.data.encoding || "utf-8");
+        return {
+          content: [{ type: "text", text: content }],
+        };
       }
 
       case "read_multiple_files": {
         const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
         if (!parsed.success) {
-          return {
-            error: {
-              code: "INVALID_ARGUMENTS",
-              message: `Invalid arguments for read_multiple_files: ${parsed.error}`,
-            },
-          };
+          throw new Error(`Invalid arguments for read_multiple_files: ${parsed.error}`);
         }
         const results = await Promise.all(
           parsed.data.paths.map(async (filePath: string) => {
@@ -358,8 +383,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               const content = await fs.readFile(validPath, "utf-8");
               return `${filePath}:\n${content}\n`;
             } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              return `${filePath}: Error - ${errorMessage}`;
+              return `${filePath}: Error - ${error instanceof Error ? error.message : String(error)}`;
             }
           }),
         );
@@ -371,12 +395,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "write_file": {
         const parsed = WriteFileArgsSchema.safeParse(args);
         if (!parsed.success) {
-          return {
-            error: {
-              code: "INVALID_ARGUMENTS",
-              message: `Invalid arguments for write_file: ${parsed.error}`,
-            },
-          };
+          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
         await fs.writeFile(validPath, parsed.data.content);
@@ -385,85 +404,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "cmd_line": {
-        const parsed = CmdLineArgsSchema.safeParse(args);
+      case "create_directory": {
+        const parsed = CreateDirectoryArgsSchema.safeParse(args);
         if (!parsed.success) {
-          return {
-            error: {
-              code: "INVALID_ARGUMENTS",
-              message: `Invalid arguments for cmd_line: ${parsed.error}`,
-            },
-          };
+          throw new Error(`Invalid arguments for create_directory: ${parsed.error}`);
         }
-
-        const { command, args: cmdArgs = [], workingDir = process.cwd() } = parsed.data;
-
-        if (!isCommandAllowed(command)) {
-          return {
-            error: {
-              code: "INVALID_COMMAND",
-              message: `Command not allowed: ${command}. Allowed commands: ${[...ALLOWED_COMMANDS].join(', ')}`,
-            },
-          };
-        }
-
-        try {
-          const validWorkingDir = await validatePath(workingDir);
-          
-          return new Promise((resolve) => {
-            const proc = spawn(command, cmdArgs, {
-              cwd: validWorkingDir,
-              shell: true
-            });
-
-            let output = '';
-            proc.stdout.on('data', (data) => output += data);
-            proc.stderr.on('data', (data) => output += data);
-
-            proc.on('close', (code) => {
-              resolve({
-                content: [{
-                  type: "text",
-                  text: `Exit code: ${code}\n\nOutput:\n${output}`
-                }],
-                isError: code !== 0
-              });
-            });
-          });
-        } catch (error) {
-          return {
-            error: {
-              code: "EXECUTION_ERROR",
-              message: String(error),
-            },
-          };
-        }
+        const validPath = await validatePath(parsed.data.path);
+        await fs.mkdir(validPath, { recursive: true });
+        return {
+          content: [{ type: "text", text: `Directory created successfully: ${validPath}` }],
+        };
       }
 
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
-  } catch (error) {
-    throw error;
-  } finally {
-    // Ensure proper cleanup
-    process.on('SIGTERM', () => {
-      const response = JSON.stringify({ type: "terminate", status: "success" });
-      process.stdout.write(response + '\n');
-      process.exit(0);
-    });
-  }
-}); // Properly close the server.setRequestHandler
+      case "list_directory": {
+        const parsed = ListDirectoryArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        const entries = await fs.readdir(validPath, { withFileTypes: true });
+        const formatted = entries
+          .map((entry) => `${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${entry.name}`)
+          .join("\n");
+        return {
+          content: [{ type: "text", text: formatted }],
+        };
+      }
 
-// Start server
-async function runServer() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Secure MCP Filesystem Server running on stdio transport");
-  console.error("Allowed directories:", allowedDirectories);
-}
+      case "move_file": {Got it, here's the continuation of the index.ts file:
 
-runServer().catch((error) => {
-  console.error("Fatal error running server:", error);
-  process.exit(1);
-});
+index.ts
