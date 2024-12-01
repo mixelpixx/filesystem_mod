@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
-import { Server, ServerResponse } from "@modelcontextprotocol/sdk/server/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ToolSchema,
-  Response,
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs/promises";
 import path from "path";
@@ -305,7 +304,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
-    let response: Response;
+    let response;
 
     switch (name) {
       case "read_file": {
@@ -392,7 +391,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 }); // Properly close the server.setRequestHandler
 
 const transport = new StdioServerTransport({
-  validateMessages: true,
-  formatResponse: true
+  debug: false
 });
-server.listen(transport);
+transport.start(server);
