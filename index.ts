@@ -457,7 +457,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function runServer() {
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await server.connect();
   console.error("Secure MCP Filesystem Server running on stdio");
   console.error("Allowed directories:", allowedDirectories);
 }
