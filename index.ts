@@ -11,6 +11,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import { z } from "zod";
+import { spawn } from 'child_process';
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 const args = process.argv.slice(2); // Extract command-line arguments
@@ -129,6 +130,17 @@ const CmdLineArgsSchema = z.object({
   args: z.array(z.string()).optional(),
   workingDir: z.string().optional(),
 });
+
+// Allowlist of permitted commands for security
+const ALLOWED_COMMANDS = new Set([
+  'node', 'npm', 'npx', 'python', 'python3', 'pip',
+  'pip3', 'uv', 'uvx', 'git', 'yarn', 'pnpm'
+]);
+
+function isCommandAllowed(command: string): boolean {
+  const normalizedCmd = path.basename(command).toLowerCase();
+  return ALLOWED_COMMANDS.has(normalizedCmd);
+}
 
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
@@ -373,7 +385,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // Rest of the code...
+      case "cmd_line": {
+        const parsed = CmdLineArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          return {
+            error: {
+              code: "INVALID_ARGUMENTS",
+              message: `Invalid arguments for cmd_line: ${parsed.error}`,
+            },
+          };
+        }
+
+        const { command, args: cmdArgs = [], workingDir = process.cwd() } = parsed.data;
+
+        if (!isCommandAllowed(command)) {
+          return {
+            error: {
+              code: "INVALID_COMMAND",
+              message: `Command not allowed: ${command}. Allowed commands: ${[...ALLOWED_COMMANDS].join(', ')}`,
+            },
+          };
+        }
+
+        try {
+          const validWorkingDir = await validatePath(workingDir);
+          
+          return new Promise((resolve) => {
+            const proc = spawn(command, cmdArgs, {
+              cwd: validWorkingDir,
+              shell: true
+            });
+
+            let output = '';
+            proc.stdout.on('data', (data) => output += data);
+            proc.stderr.on('data', (data) => output += data);
+
+            proc.on('close', (code) => {
+              resolve({
+                content: [{
+                  type: "text",
+                  text: `Exit code: ${code}\n\nOutput:\n${output}`
+                }],
+                isError: code !== 0
+              });
+            });
+          });
+        } catch (error) {
+          return {
+            error: {
+              code: "EXECUTION_ERROR",
+              message: String(error),
+            },
+          };
+        }
+      }
 
       default:
         throw new Error(`Unknown tool: ${name}`);
